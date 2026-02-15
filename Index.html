@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Simulador PLR CAIXA 2025</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+
+<!-- Máscara de moeda -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/imask/7.1.3/imask.min.js"></script>
+
+<!-- Exportar PDF -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+<style>
+  body.dark {
+    background: #121212 !important;
+    color: #e0e0e0 !important;
+  }
+  body.dark .card {
+    background: #1e1e1e !important;
+    color: #e0e0e0 !important;
+  }
+  body.dark input, body.dark textarea {
+    background: #2a2a2a !important;
+    color: #fff !important;
+    border-color: #555 !important;
+  }
+  .erro-campo {
+    border: 2px solid #dc3545 !important;
+    background: #ffe6e6 !important;
+  }
+</style>
+</head>
+
+<body class="bg-light">
+
+<div class="container mt-4">
+
+<h2 class="text-center mb-4">Simulador de PLR – CAIXA 2025</h2>
+
+<button class="btn btn-dark mb-3" onclick="toggleDarkMode()">Alternar modo escuro</button>
+
+<div id="mensagens" class="alert d-none"></div>
+<div class="card mb-3">
+  <div class="card-body">
+
+    <label class="form-label">Salário base</label>
+    <input id="salario" type="text" class="form-control mb-3">
+
+    <label class="form-label">ATS</label>
+    <input id="ats" type="text" class="form-control mb-3" value="0">
+
+    <label class="form-label">Função</label>
+    <input id="funcao" type="text" class="form-control mb-3" value="0">
+
+    <label class="form-label">RB (opcional)</label>
+    <input id="rb" type="text" class="form-control mb-3">
+
+    <label class="form-label">Lucro anual</label>
+    <input id="lucroAnual" type="text" class="form-control mb-3">
+
+    <label class="form-label">Lucro semestral</label>
+    <input id="lucroSemestral" type="text" class="form-control mb-3">
+
+    <label class="form-label">Número de empregados</label>
+    <input id="numEmpregados" type="number" class="form-control mb-3">
+
+    <label class="form-label">INPC 12 meses (%)</label>
+    <input id="inpc" type="number" class="form-control mb-3" value="4" step="0.01">
+
+    <button class="btn btn-secondary w-100 mb-3" onclick="carregarRegras()">Carregar regras 2025</button>
+
+    <label class="form-label">Regras JSON</label>
+    <textarea id="regras_json" class="form-control" rows="10"></textarea>
+
+  </div>
+</div>
+
+<button class="btn btn-primary w-100 mb-3" onclick="simular()">Calcular PLR</button>
+<button class="btn btn-success w-100 mb-3" onclick="exportarPDF()">Exportar PDF</button>
+<button class="btn btn-outline-danger w-100 mb-3" onclick="limparTudo()">Limpar tudo</button>
+
+<div id="resultado" class="fs-5"></div>
+<script>
+// ----------------------
+// MODO ESCURO
+// ----------------------
+function toggleDarkMode() {
+  document.body.classList.toggle("dark");
+  localStorage.setItem("modoEscuro", document.body.classList.contains("dark"));
+}
+if (localStorage.getItem("modoEscuro") === "true") {
+  document.body.classList.add("dark");
+}
+
+// ----------------------
+// MENSAGENS AMIGÁVEIS
+// ----------------------
+function mostrarMensagem(texto, tipo = "danger") {
+  const box = document.getElementById("mensagens");
+  box.className = `alert alert-${tipo}`;
+  box.innerHTML = texto;
+  box.classList.remove("d-none");
+}
+function limparMensagens() {
+  const box = document.getElementById("mensagens");
+  box.classList.add("d-none");
+  box.innerHTML = "";
+}
+function marcarErro(id) {
+  document.getElementById(id).classList.add("erro-campo");
+}
+function limparErros() {
+  document.querySelectorAll(".erro-campo").forEach(el => el.classList.remove("erro-campo"));
+}
+
+// ----------------------
+// VALIDAÇÃO
+// ----------------------
+function validarCampo(id, nome) {
+  const campo = document.getElementById(id);
+  const valor = campo.value.replace(/\./g, "").replace(",", ".");
+  if (valor.trim() === "" || isNaN(Number(valor))) {
+    marcarErro(id);
+    mostrarMensagem(`O campo <strong>${nome}</strong> precisa ser preenchido corretamente.`);
+    return null;
+  }
+  return Number(valor);
+}
+
+// ----------------------
+// REGRAS 2025
+// ----------------------
+function carregarRegras() {
+  const regras = {
+    ano: 2025,
+    indices: { inpc_12m: 0.04, aumento_real: 0.006 },
+    fenaban: {
+      basica: { percentual_salario: 0.90, parcela_fixa: 3343.04, teto: 17933.79 },
+      basica_adiantamento: { percentual_salario: 0.45, parcela_fixa: 1671.52, teto: 8966.89 },
+      adicional_percent_lucro: 0.022
+    },
+    plr_social: { percent_lucro: 0.04 },
+    limites: { percent_lucro_total: 0.15 }
+  };
+  document.getElementById("regras_json").value = JSON.stringify(regras, null, 2);
+}
+
+// ----------------------
+// CÁLCULO COMPLETO
+// ----------------------
+function calcularPLRCompleta({ salario, rb, lucroAnual, lucroSemestral, numEmpregados, regras }) {
+
+  const fator = 1 + regras.indices.inpc_12m + regras.indices.aumento_real;
+
+  let basicaAnual =
+    (salario * regras.fenaban.basica.percentual_salario +
+     regras.fenaban.basica.parcela_fixa) * fator;
+
+  basicaAnual = Math.min(basicaAnual, regras.fenaban.basica.teto);
+
+  const adicionalFenaban = (lucroAnual * regras.fenaban.adicional_percent_lucro) / numEmpregados;
+  const plrSocial = (lucroAnual * regras.plr_social.percent_lucro) / numEmpregados;
+
+  let plrSemComp = basicaAnual + adicionalFenaban + plrSocial;
+
+  const parcelaComplementar = Math.max(0, rb - plrSemComp);
+
+  const plrAnual = plrSemComp + parcelaComplementar;
+
+  let basicaAd =
+    (salario * regras.fenaban.basica_adiantamento.percentual_salario +
+     regras.fenaban.basica_adiantamento.parcela_fixa) * fator;
+
+  basicaAd = Math.min(basicaAd, regras.fenaban.basica_adiantamento.teto);
+
+  const adiantamento =
+    basicaAd +
+    (lucroSemestral * regras.fenaban.adicional_percent_lucro) / numEmpregados +
+    (lucroSemestral * regras.plr_social.percent_lucro) / numEmpregados;
+
+  return { plrAnual, basicaAnual, adicionalFenaban, plrSocial, parcelaComplementar, adiantamento };
+}
+
+// ----------------------
+// SIMULAÇÃO
+// ----------------------
+function simular() {
+  limparMensagens();
+  limparErros();
+
+  const salario = validarCampo("salario", "Salário");
+  const lucroAnual = validarCampo("lucroAnual", "Lucro anual");
+  const lucroSemestral = validarCampo("lucroSemestral", "Lucro semestral");
+  const numEmpregados = validarCampo("numEmpregados", "Número de empregados");
+
+  if (salario === null || lucroAnual === null || lucroSemestral === null || numEmpregados === null) return;
+
+  const ats = validarCampo("ats", "ATS") || 0;
+  const funcao = validarCampo("funcao", "Função") || 0;
+
+  let rb = document.getElementById("rb").value;
+  rb = rb.trim() === "" ? salario + ats + funcao : validarCampo("rb", "RB");
+
+  let regras;
+  try {
+    regras = JSON.parse(document.getElementById("regras_json").value);
+  } catch {
+    mostrarMensagem("JSON inválido. Clique em <strong>Carregar regras 2025</strong>.");
+    marcarErro("regras_json");
+    return;
+  }
+
+  regras.indices.inpc_12m = Number(document.getElementById("inpc").value) / 100;
+
+  const r = calcularPLRCompleta({ salario, rb, lucroAnual, lucroSemestral, numEmpregados, regras });
+
+  document.getElementById("resultado").innerHTML = `
+    <strong>PLR Anual:</strong> R$ ${r.plrAnual.toFixed(2)}<br>
+    Regra básica anual: R$ ${r.basicaAnual.toFixed(2)}<br>
+    Adicional Fenaban: R$ ${r.adicionalFenaban.toFixed(2)}<br>
+    PLR Social: R$ ${r.plrSocial.toFixed(2)}<br>
+    Parcela complementar: R$ ${r.parcelaComplementar.toFixed(2)}<br>
+    <hr>
+    <strong>Adiantamento:</strong> R$ ${r.adiantamento.toFixed(2)}
+  `;
+
+  mostrarMensagem("Cálculo realizado com sucesso!", "success");
+}
+
+// ----------------------
+// EXPORTAR PDF
+// ----------------------
+function exportarPDF() {
+  const elemento = document.getElementById("resultado");
+  html2pdf().from(elemento).save("resultado-plr.pdf");
+}
+
+// ----------------------
+// LIMPAR TUDO
+// ----------------------
+function limparTudo() {
+  localStorage.clear();
+  location.reload();
+}
+
+// ----------------------
+// SALVAR AUTOMÁTICO
+// ----------------------
+function salvarAuto() {
+  const campos = ["salario","ats","funcao","rb","lucroAnual","lucroSemestral","numEmpregados","inpc","regras_json"];
+  campos.forEach(id => {
+    localStorage.setItem(id, document.getElementById(id).value);
+  });
+}
+document.addEventListener("input", salvarAuto);
+
+window.onload = () => {
+  const campos = ["salario","ats","funcao","rb","lucroAnual","lucroSemestral","numEmpregados","inpc","regras_json"];
+  campos.forEach(id => {
+    if (localStorage.getItem(id)) {
+      document.getElementById(id).value = localStorage.getItem(id);
+    }
+  });
+};
+</script>
+
+</div>
+</body>
+</html>
